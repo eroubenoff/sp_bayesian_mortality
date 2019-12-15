@@ -353,9 +353,9 @@ alameda_county <- mx_base %>%
 ggplot(alameda_county) + 
   geom_line( aes(x = age, y= log(Mean), color = model)) +
   scale_x_continuous(name = "Age", breaks = c(1:13), labels =  c(0, 1, 5, 10, 15, 20, 
-                                     25,35, 
-                                     45, 55, 
-                                     65, 75, 85)) +
+                                                                 25,35, 
+                                                                 45, 55, 
+                                                                 65, 75, 85)) +
   ylab("log(Mx)") + 
   ggtitle("Age-Specific Log Mortality Rates for Alameda County in Selected Years") + 
   facet_grid(~year)
@@ -365,7 +365,7 @@ ggplot() +
   geom_line(data = mx_base %>% filter(county %in% c(1, 37, 6, 40, 42), year == 1), 
             aes(x = age, y= log(Mean)), color = "blue") +
   geom_line(data = mx_spatial %>% filter(county %in% c(1, 37, 6, 40, 42), year == 1), 
-                                         aes(x = age, y= log(Mean)), color = "red") +
+            aes(x = age, y= log(Mean)), color = "red") +
   facet_grid(~county)
 
 
@@ -398,3 +398,72 @@ comparison <- mx_base %>%
   select(Mean.x, Mean.y)
 t.test(comparison$Mean.x, comparison$Mean.y, paired = T)
 hist(spatial %>% filter(parname == "phi") %>% select("Mean"))
+
+
+# Test autocorrellated errors in base model
+library(sf)
+library(tmap)
+library(tigris)
+library(spdep)
+CA_shp <- counties("California", cb = T) %>% 
+  st_as_sf() %>% 
+  filter(NAME != "Sierra") %>% 
+  filter(NAME != "Alpine") %>%
+  arrange(NAME)
+base_errors <- base %>% 
+  filter(parname == "u.xta") %>% 
+  separate(index, into = c("age", "year", "county"), ",") %>%
+  mutate(age = as.numeric(age), 
+         year = as.numeric(year),
+         county = as.numeric(county))
+# Take mean total error 
+base_errors <- base_errors %>%
+  group_by(county) %>%
+  summarize(Mean = mean(Mean))
+# Join with shapefile
+CA_shp$Mean_error <- base_errors$Mean
+tm_shape(CA_shp) + 
+  tm_polygons(col = "Mean_error")
+# Gracious Moran's function from https://mgimond.github.io/Spatial/spatial-autocorrelation-in-r.html
+CA_listw <- CA_shp %>% poly2nb() %>% nb2listw()
+CA_x <- CA_shp$Mean_error
+moran_I <- moran.test(x = CA_x,listw =  CA_listw)
+geary_C <- geary.test(x = CA_x,listw =  CA_listw)
+moran_I
+geary_C
+
+
+# For the report
+library(stargazer)
+library(reshape2)
+library(magrittr)
+y.xta_out <- data$y.xta
+ages <- c("< 1 year" ,   "1-4 years",   "5-9 years",   "10-14 years", "15-19 years", "20-24 years", "25-34 years", "35-44 years", "45-54 years", "55-64 years", "65-74 years", "75-84 years", "85+ years" )
+years <- c(1999:2016)
+counties <- c(CA_shp$NAME)
+dimnames(y.xta_out) <- list(ages, years, counties)
+str(y.xta_out)
+y.xta_out <- y.xta_out %>% melt() 
+y.xta_out %<>% rename(Age = Var1, Year = Var2, County = Var3, Deaths = value)
+
+pop.xta_out <- data$pop.xta 
+dimnames(pop.xta_out) <- list(ages, years, counties)
+pop.xta_out <- pop.xta_out %>% melt()
+pop.xta_out %<>% rename(Age = Var1, Year = Var2, County = Var3, Pop= value)
+
+
+df_out <- left_join(y.xta_out, pop.xta_out)
+stargazer(rbind(head(df_out), tail(df_out)), summary = FALSE)
+
+pcs_out <- data$Yx
+dimnames(pcs_out) <- list(ages, c("PC1", "PC2", "PC3"))
+stargazer(pcs_out)
+
+pcs_out$Age <- ages
+pcs_out %<>% as.data.frame(pcs_out)
+ggplot(pcs_out) + 
+  geom_path(aes(x= Age, y = PC1))
+
+
+
+
